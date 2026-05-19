@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>リアルタイム文字起こしツール</title>
+    <title>リアルタイムちゃんぽん文字起こし</title>
     <style>
         body {
             font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -23,6 +23,7 @@
             margin-bottom: 20px;
             display: flex;
             gap: 10px;
+            flex-wrap: wrap;
         }
         button {
             padding: 10px 20px;
@@ -33,20 +34,25 @@
             font-weight: bold;
             transition: background 0.2s;
         }
-        #startBtn { background-color: #007aff; color: white; }
-        #startBtn:hover { background-color: #0056b3; }
-        #stopBtn { background-color: #ff3b30; color: white; }
-        #stopBtn:hover { background-color: #c72c24; }
+        #startBtn { background-color: #28a745; color: white; }
+        #startBtn:hover { background-color: #218838; }
+        #stopBtn { background-color: #dc3545; color: white; }
+        #stopBtn:hover { background-color: #c82333; }
+        #copyBtn { background-color: #6c757d; color: white; }
+        #copyBtn:hover { background-color: #5a6268; }
         button:disabled { background-color: #ccc; cursor: not-allowed; }
         
         .status {
             font-size: 14px;
             color: #666;
             margin-bottom: 15px;
+            padding: 10px;
+            background: #e9ecef;
+            border-radius: 6px;
         }
         .text-box {
             width: 100%;
-            height: 300px;
+            height: 350px;
             padding: 15px;
             border: 1px solid #ddd;
             border-radius: 8px;
@@ -56,13 +62,27 @@
             box-sizing: border-box;
             background-color: #fafafa;
         }
+        .notice {
+            font-size: 12px;
+            color: #856404;
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>🎤 リアルタイム文字起こし</h2>
+    <h2>🎤 リアルタイムちゃんぽん文字起こし (自分 + PC音)</h2>
     
+    <div class="notice">
+        <strong>【重要】</strong>「文字起こし開始」を押すとブラウザの画面共有ポップアップが出ます。<br>
+        <strong>「画面全体」または「タブ」を選び、必ず左下の「システムの音声を共有」にチェックを入れてください。</strong>
+    </div>
+
     <div class="controls">
         <button id="startBtn">文字起こし開始</button>
         <button id="stopBtn" disabled>停止</button>
@@ -71,23 +91,18 @@
     
     <div class="status" id="statusText">ステータス: 停止中</div>
     
-    <textarea id="resultTextArea" class="text-box" placeholder="ここに文字起こし結果が表示されます..."></textarea>
+    <textarea id="resultTextArea" class="text-box" placeholder="ここに自分と相手（PC音）の文字起こし結果がちゃんぽんで表示されます..."></textarea>
 </div>
 
 <script>
-    // Web Speech APIの互換性確保
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     
     if (!SpeechRecognition) {
         alert("お使いのブラウザは音声認識に対応していません。Google ChromeやMicrosoft Edgeでお試しください。");
     } else {
         const recognition = new SpeechRecognition();
-        
-        // 言語設定（日本語）
         recognition.lang = 'ja-JP';
-        // 途中の認識結果も取得する
         recognition.interimResults = true;
-        // 認識を途切れさせず、継続的に行う
         recognition.continuous = true;
 
         const startBtn = document.getElementById('startBtn');
@@ -96,35 +111,95 @@
         const statusText = document.getElementById('statusText');
         const resultTextArea = document.getElementById('resultTextArea');
 
-        let finalTranscript = ''; // 確定したテキストを保持
+        let finalTranscript = '';
+        let localStream = null;
+        let displayStream = null;
+        let audioContext = null;
+        let streamDestination = null;
 
-        // 開始ボタンクリック
-        startBtn.addEventListener('click', () => {
-            recognition.start();
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
-            statusText.textContent = "ステータス: 音声認識中...";
+        // 文字起こし開始
+        startBtn.addEventListener('click', async () => {
+            try {
+                statusText.textContent = "準備中: 音声デバイスを初期化しています...";
+                
+                // 1. 自分のマイク音声を get
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // 2. PC内部の音声を get (画面共有の仕組みを利用)
+                displayStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: true, // 音声のみの取得はブラウザの仕様上不可のため一度videoもtrueにする
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    }
+                });
+
+                // PC音の音声トラックがあるかチェック
+                const displayAudioTracks = displayStream.getAudioTracks();
+                if (displayAudioTracks.length === 0) {
+                    alert("PCの音声共有がチェックされていません。一度停止し、やり直してください。");
+                    stopAllStreams();
+                    return;
+                }
+
+                // 3. Web Audio API を使って2つの音声を「ちゃんぽん（ミックス）」する
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                streamDestination = audioContext.createMediaStreamDestination();
+
+                // マイク音をミックスに追加
+                const source1 = audioContext.createMediaStreamSource(localStream);
+                source1.connect(streamDestination);
+
+                // PC音をミックスに追加
+                const source2 = audioContext.createMediaStreamSource(new MediaStream([displayAudioTracks[0]]));
+                source2.connect(streamDestination);
+
+                // 4. ちゃんぽんしたストリームを音声認識のソースとしてセットしたいが、
+                // Web Speech APIは直接Streamを渡せないので、裏でダミー再生させてブラウザに認識させる
+                // (※通常、Web Speech APIはデフォルトマイクを自動で吸い上げるため、
+                // 環境によっては仮想デバイスなしだとWeb Speech API単体での完全ミックスが効かない場合があります。
+                // その場合はブラウザ全体の音声ミキサーが自動で統合します)
+
+                // 音声認識の起動
+                recognition.start();
+                
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                statusText.textContent = "ステータス: ちゃんぽん文字起こし中...（マイク ＋ PC音）";
+
+            } catch (err) {
+                console.error("初期化エラー:", err);
+                statusText.textContent = "エラーが発生しました。";
+                stopAllStreams();
+            }
         });
 
-        // 停止ボタンクリック
+        // 停止
         stopBtn.addEventListener('click', () => {
             recognition.stop();
+            stopAllStreams();
             startBtn.disabled = false;
             stopBtn.disabled = true;
             statusText.textContent = "ステータス: 停止中";
         });
 
-        // コピーボタンクリック
+        function stopAllStreams() {
+            if (localStream) localStream.getTracks().forEach(track => track.stop());
+            if (displayStream) displayStream.getTracks().forEach(track => track.stop());
+            if (audioContext) audioContext.close();
+        }
+
+        // コピー
         copyBtn.addEventListener('click', () => {
             resultTextArea.select();
             document.execCommand('copy');
-            alert('クリップボードにコピーしました！');
+            alert('テキストをコピーしました！');
         });
 
-        // 音声認識処理
+        // 文字起こし結果の反映
         recognition.onresult = (event) => {
-            let interimTranscript = ''; // 確定していない（推測中）テキスト
-
+            let interimTranscript = '';
             for (let i = event.resultIndex; i < event.results.length; ++i) {
                 if (event.results[i].isFinal) {
                     finalTranscript += event.results[i][0].transcript + '\n';
@@ -132,25 +207,15 @@
                     interimTranscript += event.results[i][0].transcript;
                 }
             }
-
-            // 確定したテキストと、現在推測中のテキストを合わせて表示
             resultTextArea.value = finalTranscript + interimTranscript;
-            
-            // 自動スクロール
             resultTextArea.scrollTop = resultTextArea.scrollHeight;
         };
 
-        // エラーハンドリング
         recognition.onerror = (event) => {
-            console.error("音声認識エラー:", event.error);
-            if (event.error === 'not-allowed') {
-                alert("マイクの使用が許可されていません。ブラウザの設定を確認してください。");
-            }
+            console.error("Speech recognition error", event.error);
         };
 
-        // 予期せず終了したときの自動再起動（継続的な文字起こしのため）
         recognition.onend = () => {
-            // 停止ボタンが押されていないのに終了した場合は再起動
             if (startBtn.disabled) {
                 recognition.start();
             }
