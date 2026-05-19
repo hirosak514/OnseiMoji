@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リアルタイム文字起こしツール</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f5f7fb;
+            color: #333;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        #startBtn { background-color: #007aff; color: white; }
+        #startBtn:hover { background-color: #0056b3; }
+        #stopBtn { background-color: #ff3b30; color: white; }
+        #stopBtn:hover { background-color: #c72c24; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        
+        .status {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 15px;
+        }
+        .text-box {
+            width: 100%;
+            height: 300px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            line-height: 1.6;
+            resize: vertical;
+            box-sizing: border-box;
+            background-color: #fafafa;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🎤 リアルタイム文字起こし</h2>
+    
+    <div class="controls">
+        <button id="startBtn">文字起こし開始</button>
+        <button id="stopBtn" disabled>停止</button>
+        <button id="copyBtn">テキストをコピー</button>
+    </div>
+    
+    <div class="status" id="statusText">ステータス: 停止中</div>
+    
+    <textarea id="resultTextArea" class="text-box" placeholder="ここに文字起こし結果が表示されます..."></textarea>
+</div>
+
+<script>
+    // Web Speech APIの互換性確保
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+        alert("お使いのブラウザは音声認識に対応していません。Google ChromeやMicrosoft Edgeでお試しください。");
+    } else {
+        const recognition = new SpeechRecognition();
+        
+        // 言語設定（日本語）
+        recognition.lang = 'ja-JP';
+        // 途中の認識結果も取得する
+        recognition.interimResults = true;
+        // 認識を途切れさせず、継続的に行う
+        recognition.continuous = true;
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const copyBtn = document.getElementById('copyBtn');
+        const statusText = document.getElementById('statusText');
+        const resultTextArea = document.getElementById('resultTextArea');
+
+        let finalTranscript = ''; // 確定したテキストを保持
+
+        // 開始ボタンクリック
+        startBtn.addEventListener('click', () => {
+            recognition.start();
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            statusText.textContent = "ステータス: 音声認識中...";
+        });
+
+        // 停止ボタンクリック
+        stopBtn.addEventListener('click', () => {
+            recognition.stop();
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            statusText.textContent = "ステータス: 停止中";
+        });
+
+        // コピーボタンクリック
+        copyBtn.addEventListener('click', () => {
+            resultTextArea.select();
+            document.execCommand('copy');
+            alert('クリップボードにコピーしました！');
+        });
+
+        // 音声認識処理
+        recognition.onresult = (event) => {
+            let interimTranscript = ''; // 確定していない（推測中）テキスト
+
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript + '\n';
+                } else {
+                    interimTranscript += event.results[i][0].transcript;
+                }
+            }
+
+            // 確定したテキストと、現在推測中のテキストを合わせて表示
+            resultTextArea.value = finalTranscript + interimTranscript;
+            
+            // 自動スクロール
+            resultTextArea.scrollTop = resultTextArea.scrollHeight;
+        };
+
+        // エラーハンドリング
+        recognition.onerror = (event) => {
+            console.error("音声認識エラー:", event.error);
+            if (event.error === 'not-allowed') {
+                alert("マイクの使用が許可されていません。ブラウザの設定を確認してください。");
+            }
+        };
+
+        // 予期せず終了したときの自動再起動（継続的な文字起こしのため）
+        recognition.onend = () => {
+            // 停止ボタンが押されていないのに終了した場合は再起動
+            if (startBtn.disabled) {
+                recognition.start();
+            }
+        };
+    }
+</script>
+
+</body>
+</html>
